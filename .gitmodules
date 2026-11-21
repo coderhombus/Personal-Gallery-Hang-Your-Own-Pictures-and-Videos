@@ -1,0 +1,3 @@
+[submodule "native/external/CommonLibSSE"]
+	path = native/external/CommonLibSSE
+	url = https://github.com/alandtse/CommonLibVR.git
