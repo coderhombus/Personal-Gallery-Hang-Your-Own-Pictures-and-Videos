@@ -3218,6 +3218,49 @@ namespace UI
 			c[ImGuiCol_ScrollbarGrabHovered] = ImColor(236, 234, 226, 110);
 		}
 
+		// The menu's font: the title screen's serif where Windows has it. Under Wine / Proton (Linux) there is no
+		// Georgia, Bahnschrift or Segoe UI, so it falls through to what Proton ships in the prefix's Windows\Fonts folder (Liberation)
+		// and then to the host system's own fonts, which Wine shows as drive Z:. Empty: none found (ImGui's own).
+		std::string FindMenuFont()
+		{
+			static constexpr const char* candidates[]{
+				// Windows
+				"C:\\Windows\\Fonts\\georgia.ttf",
+				"C:\\Windows\\Fonts\\bahnschrift.ttf",
+				"C:\\Windows\\Fonts\\segoeui.ttf",
+				// Proton / Wine's own
+				"C:\\Windows\\Fonts\\LiberationSerif-Regular.ttf",
+				"C:\\Windows\\Fonts\\LiberationSans-Regular.ttf",
+				"C:\\Windows\\Fonts\\tahoma.ttf",
+				// the Linux host's (Arch / CachyOS, Fedora, Debian / Ubuntu layouts)
+				"Z:\\usr\\share\\fonts\\liberation\\LiberationSerif-Regular.ttf",
+				"Z:\\usr\\share\\fonts\\liberation-fonts\\LiberationSerif-Regular.ttf",
+				"Z:\\usr\\share\\fonts\\truetype\\liberation\\LiberationSerif-Regular.ttf",
+				"Z:\\usr\\share\\fonts\\TTF\\DejaVuSerif.ttf",
+				"Z:\\usr\\share\\fonts\\dejavu\\DejaVuSerif.ttf",
+				"Z:\\usr\\share\\fonts\\truetype\\dejavu\\DejaVuSerif.ttf",
+				"Z:\\usr\\share\\fonts\\noto\\NotoSerif-Regular.ttf",
+				"Z:\\usr\\share\\fonts\\truetype\\noto\\NotoSerif-Regular.ttf",
+				"Z:\\usr\\share\\fonts\\TTF\\DejaVuSans.ttf",
+				"Z:\\usr\\share\\fonts\\truetype\\dejavu\\DejaVuSans.ttf",
+			};
+			std::error_code ec;
+			for (const char* c : candidates) {
+				if (std::filesystem::exists(c, ec)) {
+					return c;
+				}
+			}
+			// last resort: any TrueType file in the prefix's font folder
+			for (std::filesystem::directory_iterator it("C:\\Windows\\Fonts", ec), end; !ec && it != end; it.increment(ec)) {
+				auto ext = it->path().extension().string();
+				std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+				if (ext == ".ttf") {
+					return it->path().string();
+				}
+			}
+			return {};
+		}
+
 		void InitImGui(IDXGISwapChain* swapChain)
 		{
 			DXGI_SWAP_CHAIN_DESC desc{};
@@ -3228,16 +3271,12 @@ namespace UI
 			io.IniFilename = nullptr;
 			io.LogFilename = nullptr;
 			io.MouseDrawCursor = true;
-			const char* font = "C:\\Windows\\Fonts\\georgia.ttf";  // the title screen's serif
-			if (!std::filesystem::exists(font)) {
-				font = "C:\\Windows\\Fonts\\bahnschrift.ttf";
+			const std::string font = FindMenuFont();
+			if (!font.empty()) {
+				fontBody = io.Fonts->AddFontFromFileTTF(font.c_str(), 24 * k);
+				fontSmall = io.Fonts->AddFontFromFileTTF(font.c_str(), 19 * k);
+				fontTitle = io.Fonts->AddFontFromFileTTF(font.c_str(), 34 * k);
 			}
-			if (!std::filesystem::exists(font)) {
-				font = "C:\\Windows\\Fonts\\segoeui.ttf";
-			}
-			fontBody = io.Fonts->AddFontFromFileTTF(font, 24 * k);
-			fontSmall = io.Fonts->AddFontFromFileTTF(font, 19 * k);
-			fontTitle = io.Fonts->AddFontFromFileTTF(font, 34 * k);
 			if (!fontBody || !fontSmall || !fontTitle) {
 				fontBody = fontSmall = fontTitle = io.Fonts->AddFontDefault();
 			}

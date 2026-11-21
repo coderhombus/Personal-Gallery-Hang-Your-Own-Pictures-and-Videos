@@ -5,6 +5,7 @@ videos on the walls of Skyrim, in frames, on stands and as projections.
 
 - `native/` - the SKSE plugin `PersonalGalleryNative.dll` (C++23). See `native/BUILDING.txt`.
 - `papyrus/` - the mod's Papyrus scripts.
+- `LINUX.md` - running under Linux / Proton (experimental).
 - `Mod-Readme.txt` - the readme shipped with the mod.
 
 ## Licence
@@ -25,5 +26,6 @@ even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE
   Ryan McKenzie and contributors - GPL-3.0-or-later
 - [Dear ImGui](https://github.com/ocornut/imgui) - MIT
 - [DirectXTex](https://github.com/microsoft/DirectXTex) - MIT
+- [FFmpeg](https://ffmpeg.org) - LGPL-2.1-or-later (video, audio and extra image formats; needed for Linux / Proton)
 
 The mod needs SKSE, PapyrusUtil and SkyUI to run. It ships no pictures.

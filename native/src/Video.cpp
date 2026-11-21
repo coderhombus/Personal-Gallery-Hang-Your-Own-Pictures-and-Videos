@@ -17,12 +17,18 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
+#include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <thread>
 
 #include "Filters.h"
 #include "Dev.h"
+
+#ifdef PG_WITH_FFMPEG
+#	include "VideoFFmpeg.h"
+#endif
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -47,6 +53,65 @@ namespace Video
 			std::wstring e = std::filesystem::path(path).extension().wstring();
 			std::transform(e.begin(), e.end(), e.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
 			return e;
+		}
+
+		// ---- which decoder -----------------------------------------------------------------
+		//
+		// Windows: Media Foundation first (hardware decoding, nothing extra to carry), FFmpeg for what it can't open.
+		// Wine / Proton (Linux): Media Foundation is only partly there, so FFmpeg first and Media Foundation as the
+		// fallback. Set the environment variable PG_VIDEO_BACKEND to "ffmpeg" or "windows" to force either order
+		// (in Steam: launch options  PG_VIDEO_BACKEND=ffmpeg %command%).
+		enum class Backend
+		{
+			Auto,
+			FFmpeg,
+			Windows
+		};
+
+		bool RunningUnderWine()
+		{
+			static const bool wine = [] {
+				const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+				return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+			}();
+			return wine;
+		}
+
+		Backend Configured()
+		{
+			static const Backend b = [] {
+				char       buf[16]{};
+				const DWORD n = GetEnvironmentVariableA("PG_VIDEO_BACKEND", buf, sizeof(buf));
+				if (n == 0 || n >= sizeof(buf)) {
+					return Backend::Auto;
+				}
+				std::string v(buf);
+				std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				if (v == "ffmpeg") {
+					return Backend::FFmpeg;
+				}
+				if (v == "windows" || v == "mf") {
+					return Backend::Windows;
+				}
+				return Backend::Auto;
+			}();
+			return b;
+		}
+
+		bool FFmpegFirst()
+		{
+#ifdef PG_WITH_FFMPEG
+			switch (Configured()) {
+			case Backend::FFmpeg:
+				return true;
+			case Backend::Windows:
+				return false;
+			default:
+				return RunningUnderWine();
+			}
+#else
+			return false;
+#endif
 		}
 
 		// ---- Media Foundation -------------------------------------------------------------
@@ -351,20 +416,53 @@ namespace Video
 	bool IsVideoFile(const std::wstring& a_path)
 	{
 		const auto e = Ext(a_path);
-		return e == L".mp4" || e == L".m4v" || e == L".mov" || e == L".wmv" || e == L".avi" || e == L".mkv" || e == L".webm" || e == L".gif";
+		if (e == L".mp4" || e == L".m4v" || e == L".mov" || e == L".wmv" || e == L".avi" || e == L".mkv" || e == L".webm" || e == L".gif") {
+			return true;
+		}
+#ifdef PG_WITH_FFMPEG
+		return e == L".mpg" || e == L".mpeg" || e == L".ogv" || e == L".3gp" || e == L".flv";  // only FFmpeg reads these
+#else
+		return false;
+#endif
 	}
 
 	std::unique_ptr<Decoder> Open(const std::wstring& a_path, float a_aspect, int a_maxWidth)
 	{
-		if (Ext(a_path) == L".gif") {
-			auto d = std::make_unique<GifDecoder>();
-			return d->Init(a_path) ? std::move(d) : nullptr;
+		auto viaWindows = [&]() -> std::unique_ptr<Decoder> {
+			if (Ext(a_path) == L".gif") {
+				auto d = std::make_unique<GifDecoder>();
+				return d->Init(a_path) ? std::move(d) : nullptr;
+			}
+			auto d = std::make_unique<MFDecoder>();
+			return d->Init(a_path, a_aspect, a_maxWidth) ? std::move(d) : nullptr;
+		};
+		auto viaFFmpeg = [&]() -> std::unique_ptr<Decoder> {
+#ifdef PG_WITH_FFMPEG
+			return FF::Open(a_path, a_aspect, a_maxWidth);
+#else
+			return nullptr;
+#endif
+		};
+		if (FFmpegFirst()) {
+			if (auto d = viaFFmpeg()) {
+				return d;
+			}
+			Dev::Log("video", "FFmpeg could not open the file, trying Windows' own decoder");
+			return viaWindows();
 		}
-		auto d = std::make_unique<MFDecoder>();
-		return d->Init(a_path, a_aspect, a_maxWidth) ? std::move(d) : nullptr;
+		if (auto d = viaWindows()) {
+			return d;
+		}
+		if (auto d = viaFFmpeg()) {
+			Dev::Log("video", "Windows could not open the file, FFmpeg did");
+			return d;
+		}
+		return nullptr;
 	}
 
-	Audio ReadAudio(const std::wstring& a_path, const std::atomic<bool>* a_run)
+	namespace
+	{
+	Audio ReadAudioMF(const std::wstring& a_path, const std::atomic<bool>* a_run)
 	{
 		Audio                   out;
 		ComPtr<IMFSourceReader> reader;
@@ -428,6 +526,34 @@ namespace Video
 				}
 			}
 			buf->Unlock();
+		}
+		return out;
+	}
+	}  // namespace
+
+	Audio ReadAudio(const std::wstring& a_path, const std::atomic<bool>* a_run)
+	{
+		if (Ext(a_path) == L".gif") {
+			return {};
+		}
+#ifdef PG_WITH_FFMPEG
+		auto viaFFmpeg = [&](Audio& a_out) { return FF::ReadAudio(a_path, a_run, a_out); };
+#else
+		auto viaFFmpeg = [&](Audio&) { return false; };
+#endif
+		Audio out;
+		if (FFmpegFirst()) {
+			if (viaFFmpeg(out)) {
+				return out;
+			}
+			if (a_run && !a_run->load()) {
+				return {};
+			}
+			return ReadAudioMF(a_path, a_run);
+		}
+		out = ReadAudioMF(a_path, a_run);
+		if (out.samples.empty() && !(a_run && !a_run->load()) && viaFFmpeg(out)) {
+			return out;  // e.g. Opus / Vorbis in a WebM or MKV, which Windows has no decoder for
 		}
 		return out;
 	}

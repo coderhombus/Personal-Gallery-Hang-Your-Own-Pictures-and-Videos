@@ -19,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -35,6 +36,10 @@
 #include "Dev.h"
 #include "Filters.h"
 #include "Video.h"
+
+#ifdef PG_WITH_FFMPEG
+#	include "VideoFFmpeg.h"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -197,8 +202,48 @@ namespace Pictures
 			return e;
 		}
 
+#ifdef PG_WITH_FFMPEG
+		// What WIC could not read (WebP without Microsoft's extension, anything under Wine / Proton that its codecs
+		// miss) goes through FFmpeg, which is linked into the plugin and needs nothing from the OS.
+		HRESULT LoadImageViaFFmpeg(const fs::path& f, DirectX::TexMetadata* meta, DirectX::ScratchImage& out)
+		{
+			int                       w = 0, h = 0;
+			std::vector<std::uint8_t> px;
+			if (!Video::FF::LoadStill(f.wstring(), w, h, px)) {
+				return E_FAIL;
+			}
+			const HRESULT hr = out.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<size_t>(w), static_cast<size_t>(h), 1, 1);
+			if (FAILED(hr)) {
+				return hr;
+			}
+			const DirectX::Image* im = out.GetImage(0, 0, 0);
+			for (int y = 0; y < h; ++y) {
+				std::memcpy(im->pixels + static_cast<size_t>(y) * im->rowPitch, &px[static_cast<size_t>(y) * w * 4], static_cast<size_t>(w) * 4);
+			}
+			if (meta) {
+				*meta = out.GetMetadata();
+			}
+			return S_OK;
+		}
+
+		HRESULT SizeViaFFmpeg(const fs::path& f, DirectX::TexMetadata& meta)
+		{
+			int w = 0, h = 0;
+			if (!Video::FF::StillSize(f.wstring(), w, h)) {
+				return E_FAIL;
+			}
+			meta = {};
+			meta.width = static_cast<size_t>(w);
+			meta.height = static_cast<size_t>(h);
+			meta.depth = meta.arraySize = meta.mipLevels = 1;
+			meta.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+			return S_OK;
+		}
+#endif
+
 		// Any still image: TGA and DDS through DirectXTex, everything else through Windows (WIC: PNG, JPEG,
-		// BMP, WebP, TIFF, and HEIC / AVIF where Windows has those codecs).
+		// BMP, WebP, TIFF, and HEIC / AVIF where Windows has those codecs), and through FFmpeg where WIC can't.
 		HRESULT LoadImageFile(const fs::path& f, DirectX::TexMetadata* meta, DirectX::ScratchImage& out)
 		{
 			const auto ext = LowerExt(f);
@@ -221,7 +266,13 @@ namespace Pictures
 				}
 				return hr;
 			}
-			return DirectX::LoadFromWICFile(f.c_str(), DirectX::WIC_FLAGS_FORCE_RGB | DirectX::WIC_FLAGS_IGNORE_SRGB, meta, out);
+			const HRESULT wic = DirectX::LoadFromWICFile(f.c_str(), DirectX::WIC_FLAGS_FORCE_RGB | DirectX::WIC_FLAGS_IGNORE_SRGB, meta, out);
+#ifdef PG_WITH_FFMPEG
+			if (FAILED(wic)) {
+				return LoadImageViaFFmpeg(f, meta, out);
+			}
+#endif
+			return wic;
 		}
 
 		HRESULT ImageSize(const fs::path& f, DirectX::TexMetadata& meta)
@@ -233,7 +284,13 @@ namespace Pictures
 			if (ext == L".dds") {
 				return DirectX::GetMetadataFromDDSFile(f.c_str(), DirectX::DDS_FLAGS_NONE, meta);
 			}
-			return DirectX::GetMetadataFromWICFile(f.c_str(), DirectX::WIC_FLAGS_NONE, meta);
+			const HRESULT wic = DirectX::GetMetadataFromWICFile(f.c_str(), DirectX::WIC_FLAGS_NONE, meta);
+#ifdef PG_WITH_FFMPEG
+			if (FAILED(wic)) {
+				return SizeViaFFmpeg(f, meta);
+			}
+#endif
+			return wic;
 		}
 
 		// A frame a little way into a video (skips black fade-ins), as RGBA.
