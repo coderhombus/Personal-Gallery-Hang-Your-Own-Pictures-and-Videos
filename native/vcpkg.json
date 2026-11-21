@@ -48,6 +48,17 @@
                              "version\u003e=":  "7.28"
                          },
                          {
+                             "name":  "ffmpeg",
+                             "default-features":  false,
+                             "features":  [
+                                              "avcodec",
+                                              "avformat",
+                                              "swresample",
+                                              "swscale",
+                                              "dav1d"
+                                          ]
+                         },
+                         {
                              "name":  "directxtex"
                          },
                          {

@@ -12,6 +12,14 @@ include(external/CommonLibSSE/cmake/CommonLibSSE.cmake)
 find_package(directxtex CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
+# FFmpeg, linked into the plugin itself: the video / audio / still-image decoder for Wine / Proton (Linux), where
+# Windows Media Foundation is not usable, and a fallback on Windows for formats Media Foundation lacks (VP9, AV1,
+# HEVC without the Store extension, MKV, WebM, WebP ...). Turn off to get the original Windows-only build.
+option(PG_FFMPEG "Decode with FFmpeg (Linux/Proton support; more formats on Windows)" ON)
+if(PG_FFMPEG)
+	find_package(FFMPEG REQUIRED)
+endif()
+
 add_commonlibsse_plugin(PersonalGalleryNative
 	NAME "PersonalGalleryNative"
 	AUTHOR "Personal Gallery"
@@ -27,6 +35,15 @@ add_commonlibsse_plugin(PersonalGalleryNative
 		src/UI.cpp
 		src/Video.cpp
 		src/Player.cpp)
+
+if(PG_FFMPEG)
+	target_sources(PersonalGalleryNative PRIVATE src/VideoFFmpeg.cpp)
+	target_compile_definitions(PersonalGalleryNative PRIVATE PG_WITH_FFMPEG PG_FF_LOG)
+	target_include_directories(PersonalGalleryNative PRIVATE ${FFMPEG_INCLUDE_DIRS})
+	target_link_directories(PersonalGalleryNative PRIVATE ${FFMPEG_LIBRARY_DIRS})
+	# FFmpeg's static libraries pull in a few system libraries
+	target_link_libraries(PersonalGalleryNative PRIVATE ${FFMPEG_LIBRARIES} bcrypt secur32 ws2_32 mfuuid strmiids ole32 user32)
+endif()
 
 target_compile_definitions(PersonalGalleryNative PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(PersonalGalleryNative PRIVATE Microsoft::DirectXTex imgui::imgui d3d11 dxgi mfplat mfreadwrite mfuuid propsys xaudio2 windowscodecs gdi32)

@@ -23,7 +23,12 @@ BUILDING
    own copies; change the two paths at its top if yours are elsewhere.
 3. Run build.bat. The plugin is written to build/PersonalGalleryNative.dll.
 
+FFMPEG / LINUX (PROTON)
+  vcpkg also builds FFmpeg (core libraries, static) for the plugin; CMake option PG_FFMPEG (default ON). Turn it
+  off with -DPG_FFMPEG=OFF for the original Windows-only decoding. See ../LINUX.md.
+
 LIBRARIES
   CommonLibSSE-NG by alandtse, CharmedBaryon, Ryan McKenzie and contributors - GPL-3.0-or-later
   Dear ImGui by Omar Cornut and contributors - MIT
   DirectXTex by Microsoft - MIT
+  FFmpeg (libavformat, libavcodec, libswscale, libswresample) - LGPL-2.1-or-later
